@@ -113,43 +113,104 @@ def _sortable_html(paths: list[str]) -> str:
     if not paths:
         return ""
     items = "".join(
-        f"""<li class="vitem" data-path="{p}"
-              style="display:flex;align-items:center;gap:10px;padding:10px 14px;
-                     margin:5px 0;background:#1f2937;border-radius:8px;cursor:grab;
-                     border:1px solid #374151;list-style:none;user-select:none;">
-              <span style="font-size:18px;color:#6b7280;">⠿</span>
+        f"""<li class="vitem" draggable="true" data-path="{p}"
+              style="display:flex;align-items:center;gap:10px;padding:11px 14px;
+                     margin:5px 0;background:#1f2937;border-radius:8px;
+                     border:2px solid #374151;list-style:none;cursor:grab;
+                     transition:border-color .15s;">
+              <span style="font-size:20px;color:#6b7280;cursor:grab;">⠿</span>
               <span style="flex:1;font-size:13px;color:#e5e7eb;overflow:hidden;
                            text-overflow:ellipsis;white-space:nowrap;">{os.path.basename(p)}</span>
               <span class="badge" style="font-size:11px;color:#9ca3af;background:#111827;
-                           padding:2px 8px;border-radius:4px;">#{i+1}</span>
+                           padding:2px 8px;border-radius:4px;flex-shrink:0;">#{i+1}</span>
             </li>"""
         for i, p in enumerate(paths)
     )
     return f"""
-<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
-<p style="color:#9ca3af;font-size:12px;margin:8px 0 4px;">
-  Drag rows to reorder. Videos will be merged top → bottom.
+<p style="color:#9ca3af;font-size:12px;margin:8px 0 6px;">
+  🖱 Drag rows to reorder — videos merge top → bottom.
 </p>
 <ul id="vlist" style="padding:0;margin:0;">{items}</ul>
 <script>
-(function init() {{
-  var el = document.getElementById('vlist');
-  if (!el) {{ setTimeout(init, 400); return; }}
-  if (el._si) return;
-  el._si = true;
-  new Sortable(el, {{
-    animation: 180,
-    onEnd: function() {{
-      var paths = Array.from(el.querySelectorAll('.vitem'))
-                      .map(function(li) {{ return li.dataset.path; }});
-      el.querySelectorAll('.badge').forEach(function(b,i){{b.textContent='#'+(i+1);}});
-      var box = document.querySelector('#m-order textarea');
-      if (box) {{
-        box.value = JSON.stringify(paths);
-        box.dispatchEvent(new Event('input', {{bubbles:true}}));
-      }}
+(function() {{
+  var dragging = null;
+
+  function renumber(list) {{
+    list.querySelectorAll('.badge').forEach(function(b, i) {{
+      b.textContent = '#' + (i + 1);
+    }});
+  }}
+
+  function pushOrder(list) {{
+    var paths = Array.from(list.querySelectorAll('.vitem'))
+                     .map(function(li) {{ return li.dataset.path; }});
+    /* try several selectors to find the hidden textarea */
+    var box = document.querySelector('#m-order textarea')
+           || document.querySelector('[data-testid="m-order"] textarea')
+           || document.querySelector('textarea[data-m-order]');
+    if (box) {{
+      box.value = JSON.stringify(paths);
+      ['input','change'].forEach(function(ev) {{
+        box.dispatchEvent(new Event(ev, {{bubbles: true}}));
+      }});
     }}
-  }});
+  }}
+
+  function init() {{
+    var list = document.getElementById('vlist');
+    if (!list || list._ready) return;
+    list._ready = true;
+
+    list.querySelectorAll('.vitem').forEach(function(item) {{
+      item.addEventListener('dragstart', function(e) {{
+        dragging = item;
+        setTimeout(function() {{ item.style.opacity = '0.4'; }}, 0);
+        e.dataTransfer.effectAllowed = 'move';
+      }});
+
+      item.addEventListener('dragend', function() {{
+        item.style.opacity = '1';
+        list.querySelectorAll('.vitem').forEach(function(li) {{
+          li.style.borderColor = '#374151';
+        }});
+        dragging = null;
+        renumber(list);
+        pushOrder(list);
+      }});
+
+      item.addEventListener('dragover', function(e) {{
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (!dragging || dragging === item) return;
+        var rect = item.getBoundingClientRect();
+        var after = e.clientY > rect.top + rect.height / 2;
+        list.querySelectorAll('.vitem').forEach(function(li) {{
+          li.style.borderColor = '#374151';
+        }});
+        item.style.borderColor = after ? '#6366f1' : '#818cf8';
+        var ref = after ? item.nextSibling : item;
+        if (list.insertBefore(dragging, ref) !== dragging) {{}}
+        list.insertBefore(dragging, ref);
+      }});
+
+      item.addEventListener('dragleave', function() {{
+        item.style.borderColor = '#374151';
+      }});
+
+      item.addEventListener('drop', function(e) {{
+        e.preventDefault();
+      }});
+    }});
+  }}
+
+  /* retry until the list element exists in DOM */
+  var attempts = 0;
+  var t = setInterval(function() {{
+    init();
+    if (++attempts > 20) clearInterval(t);
+    if (document.getElementById('vlist') && document.getElementById('vlist')._ready)
+      clearInterval(t);
+  }}, 300);
 }})();
 </script>"""
 
