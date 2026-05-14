@@ -1,75 +1,76 @@
 # Video Editor
 
-A local video editing tool with a clean browser UI. Built with Python, Gradio, and FFmpeg.
+A local browser-based video editing tool. Built with Python, Gradio, and FFmpeg.
 
-Supports three operations — **speed adjustment**, **cropping**, and **merging** — all with high-quality H.264 output and a download button on every tab.
+Three tabs: **Speed**, **Crop & Trim**, and **Merge** — every tab has a preview player and a download button.
 
 ---
 
 ## Features
 
-### Speed
+### ⚡ Speed
 - Change playback speed from **0.05× to 100×**
-- Slider for quick selection (0.1×–10×) plus a number input for exact values
-- Audio is retimed using chained `atempo` filters (FFmpeg only supports 0.5–2.0 per stage, so extreme speeds chain multiple stages automatically)
-- Video frames are retimed with `setpts`
+- Slider (0.1×–10×) plus a free-text number input for exact values
+- Audio is retimed using chained `atempo` filters; video frames via `setpts`
 
-### Crop
-- Upload a video and its **width × height is auto-detected**
-- Set X offset, Y offset, output width, and output height numerically
-- Dimensions are automatically adjusted to be even numbers (H.264 requirement)
-- Audio is copied without re-encoding for speed
+### ✂️ Crop & Trim
+Both operations can be applied together in a single encode pass.
 
-### Merge
-- Upload **2 to 5 videos** and concatenate them in order
-- Videos are re-encoded to ensure consistent codec and resolution across clips
-- Uses FFmpeg's concat demuxer
+**Spatial Crop**
+- Enable with a checkbox
+- X, Y, Width, Height sliders — auto-populated from the video's dimensions on upload
+- Width/Height snap to even numbers (H.264 requirement)
+
+**Time Trim**
+- Enable with a checkbox
+- Start and End sliders — auto-populated from the video's duration on upload
+- **Preview Trim** button: generates a ≤30 s preview clip instantly so you can verify the cut before the full encode
+- Scrub the preview player to find exact timestamps before setting the sliders
+
+### 🔗 Merge
+- Upload **any number of videos** at once via multi-file picker
+- **Drag and drop** rows in the list to set the merge order
+- Order badges (#1, #2 …) update live as you drag
+- Videos are re-encoded to ensure consistent codec and resolution
 
 ### Quality
 All outputs use:
 - **CRF 18 libx264** — visually lossless H.264 video
-- **AAC 192k** audio
-- `fast` preset — good balance of speed and compression
+- **AAC 192 kbps** audio
+- `fast` preset — good speed/compression balance
 
 ---
 
 ## Requirements
 
-- macOS (tested on macOS 14+), Linux should work too
+- macOS (tested on macOS 14+) or Linux
 - Python 3.12+
-- FFmpeg (installed via Homebrew or system package manager)
+- FFmpeg
 
 ---
 
 ## Setup
 
-**1. Clone the repo**
 ```bash
 git clone git@github.com:pranavsaji/video-editor.git
 cd video-editor
-```
 
-**2. Install FFmpeg** (if not already installed)
-```bash
-brew install ffmpeg        # macOS
-# sudo apt install ffmpeg  # Ubuntu/Debian
-```
+# Install FFmpeg if needed
+brew install ffmpeg          # macOS
+# sudo apt install ffmpeg   # Ubuntu/Debian
 
-**3. Create a virtual environment and install dependencies**
-```bash
+# Create venv and install Gradio
 python3.12 -m venv .venv
 .venv/bin/pip install gradio
 ```
 
----
-
-## Usage
+## Run
 
 ```bash
 .venv/bin/python app.py
 ```
 
-Then open **http://127.0.0.1:7860** in your browser.
+Open **http://127.0.0.1:7860** in your browser.
 
 ---
 
@@ -77,46 +78,41 @@ Then open **http://127.0.0.1:7860** in your browser.
 
 ```
 video-editor/
-├── app.py                  # Gradio UI — all three tabs wired together
+├── app.py                   # Gradio UI — all tabs, event wiring
 ├── tools/
-│   ├── speed_video.py      # FFmpeg speed adjustment logic
-│   ├── crop_video.py       # FFmpeg crop logic + dimension detection
-│   └── merge_videos.py     # FFmpeg concat demuxer logic
+│   ├── speed_video.py       # Speed change via setpts + chained atempo
+│   ├── crop_video.py        # Spatial crop + dimension detection (ffprobe)
+│   ├── trim_video.py        # Time trim + duration detection (ffprobe)
+│   └── merge_videos.py      # Concat demuxer merge
 ├── .gitignore
 └── README.md
 ```
 
-**`.tmp/`** is created at runtime to hold output files. It is gitignored and safe to delete at any time.
+`.tmp/` is created at runtime for output files — gitignored and safe to delete.
 
 ---
 
 ## How Each Tool Works
 
-### `tools/speed_video.py`
-Uses two FFmpeg filters in combination:
-- `setpts=1/speed*PTS` — scales the presentation timestamp of every video frame
-- `atempo` chain — adjusts audio tempo. Since FFmpeg limits each `atempo` stage to [0.5, 2.0], extreme speeds are handled by chaining multiple stages (e.g. 8× = `atempo=2.0,atempo=2.0,atempo=2.0`)
-
-### `tools/crop_video.py`
-- `ffprobe` reads the input video's stream metadata to extract width and height
-- `crop=W:H:X:Y` FFmpeg filter crops the frame. Width and height are snapped to even numbers before the encode
-
-### `tools/merge_videos.py`
-- Writes a temporary FFmpeg concat list file pointing to each input video
-- Passes it to FFmpeg via `-f concat -safe 0`, which reads and concatenates the files in order
-- Re-encodes everything so codecs and resolution are consistent in the output
+| Tool | FFmpeg technique |
+|------|-----------------|
+| `speed_video.py` | `setpts=1/N*PTS` for video; chained `atempo` stages for audio (each stage capped at 0.5–2.0) |
+| `crop_video.py` | `ffprobe` reads stream metadata → `crop=W:H:X:Y` filter |
+| `trim_video.py` | `-ss START` before `-i` for fast seek; `-t DURATION` for frame-accurate end point |
+| `merge_videos.py` | Temp concat list file → `-f concat -safe 0` |
 
 ---
 
-## Performance Notes
+## Performance (M-series Mac, 1080p)
 
-| Operation | Speed estimate (M-series Mac) |
-|-----------|-------------------------------|
-| Speed change (1h video) | ~5–15 min |
-| Crop | ~3–10 min (same as a full re-encode) |
-| Merge (N × 1h clips) | ~5–15 min per clip |
+| Operation | Estimate |
+|-----------|----------|
+| Speed change — 1 h video | 5–15 min |
+| Crop or Trim — 1 h video | 5–15 min |
+| Trim preview (≤30 s clip) | < 30 s |
+| Merge — per hour of footage | 5–15 min |
 
-Encode time scales with video duration and resolution. A 22-minute 1080p video at 1.1× takes roughly **2–4 minutes**.
+A 22-minute 1080p video at 1.1× speed takes roughly **2–4 minutes**.
 
 ---
 
