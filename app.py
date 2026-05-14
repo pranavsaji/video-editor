@@ -110,109 +110,27 @@ def process_crop_trim(video_path, x, y, w, h, start, end, do_crop, do_trim):
 # ── Merge ─────────────────────────────────────────────────────────────────────
 
 def _sortable_html(paths: list[str]) -> str:
+    """Return pure HTML only — JS is injected via gr.Blocks(head=) to avoid sanitization."""
     if not paths:
         return ""
     items = "".join(
-        f"""<li class="vitem" draggable="true" data-path="{p}"
-              style="display:flex;align-items:center;gap:10px;padding:11px 14px;
-                     margin:5px 0;background:#1f2937;border-radius:8px;
-                     border:2px solid #374151;list-style:none;cursor:grab;
-                     transition:border-color .15s;">
-              <span style="font-size:20px;color:#6b7280;cursor:grab;">⠿</span>
-              <span style="flex:1;font-size:13px;color:#e5e7eb;overflow:hidden;
-                           text-overflow:ellipsis;white-space:nowrap;">{os.path.basename(p)}</span>
-              <span class="badge" style="font-size:11px;color:#9ca3af;background:#111827;
-                           padding:2px 8px;border-radius:4px;flex-shrink:0;">#{i+1}</span>
-            </li>"""
+        f'<li class="vitem" draggable="true" data-path="{p}" '
+        f'style="display:flex;align-items:center;gap:10px;padding:11px 14px;'
+        f'margin:5px 0;background:#1f2937;border-radius:8px;border:2px solid #374151;'
+        f'list-style:none;cursor:grab;transition:border-color .15s;">'
+        f'<span style="font-size:20px;color:#6b7280;">⠿</span>'
+        f'<span style="flex:1;font-size:13px;color:#e5e7eb;overflow:hidden;'
+        f'text-overflow:ellipsis;white-space:nowrap;">{os.path.basename(p)}</span>'
+        f'<span class="vbadge" style="font-size:11px;color:#9ca3af;background:#111827;'
+        f'padding:2px 8px;border-radius:4px;flex-shrink:0;">#{i+1}</span>'
+        f'</li>'
         for i, p in enumerate(paths)
     )
-    return f"""
-<p style="color:#9ca3af;font-size:12px;margin:8px 0 6px;">
-  🖱 Drag rows to reorder — videos merge top → bottom.
-</p>
-<ul id="vlist" style="padding:0;margin:0;">{items}</ul>
-<script>
-(function() {{
-  var dragging = null;
-
-  function renumber(list) {{
-    list.querySelectorAll('.badge').forEach(function(b, i) {{
-      b.textContent = '#' + (i + 1);
-    }});
-  }}
-
-  function pushOrder(list) {{
-    var paths = Array.from(list.querySelectorAll('.vitem'))
-                     .map(function(li) {{ return li.dataset.path; }});
-    /* try several selectors to find the hidden textarea */
-    var box = document.querySelector('#m-order textarea')
-           || document.querySelector('[data-testid="m-order"] textarea')
-           || document.querySelector('textarea[data-m-order]');
-    if (box) {{
-      box.value = JSON.stringify(paths);
-      ['input','change'].forEach(function(ev) {{
-        box.dispatchEvent(new Event(ev, {{bubbles: true}}));
-      }});
-    }}
-  }}
-
-  function init() {{
-    var list = document.getElementById('vlist');
-    if (!list || list._ready) return;
-    list._ready = true;
-
-    list.querySelectorAll('.vitem').forEach(function(item) {{
-      item.addEventListener('dragstart', function(e) {{
-        dragging = item;
-        setTimeout(function() {{ item.style.opacity = '0.4'; }}, 0);
-        e.dataTransfer.effectAllowed = 'move';
-      }});
-
-      item.addEventListener('dragend', function() {{
-        item.style.opacity = '1';
-        list.querySelectorAll('.vitem').forEach(function(li) {{
-          li.style.borderColor = '#374151';
-        }});
-        dragging = null;
-        renumber(list);
-        pushOrder(list);
-      }});
-
-      item.addEventListener('dragover', function(e) {{
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        if (!dragging || dragging === item) return;
-        var rect = item.getBoundingClientRect();
-        var after = e.clientY > rect.top + rect.height / 2;
-        list.querySelectorAll('.vitem').forEach(function(li) {{
-          li.style.borderColor = '#374151';
-        }});
-        item.style.borderColor = after ? '#6366f1' : '#818cf8';
-        var ref = after ? item.nextSibling : item;
-        if (list.insertBefore(dragging, ref) !== dragging) {{}}
-        list.insertBefore(dragging, ref);
-      }});
-
-      item.addEventListener('dragleave', function() {{
-        item.style.borderColor = '#374151';
-      }});
-
-      item.addEventListener('drop', function(e) {{
-        e.preventDefault();
-      }});
-    }});
-  }}
-
-  /* retry until the list element exists in DOM */
-  var attempts = 0;
-  var t = setInterval(function() {{
-    init();
-    if (++attempts > 20) clearInterval(t);
-    if (document.getElementById('vlist') && document.getElementById('vlist')._ready)
-      clearInterval(t);
-  }}, 300);
-}})();
-</script>"""
+    return (
+        '<p style="color:#9ca3af;font-size:12px;margin:8px 0 6px;">'
+        '&#x1F5B1; Drag rows to reorder — videos merge top &rarr; bottom.</p>'
+        f'<ul id="vlist" style="padding:0;margin:0;">{items}</ul>'
+    )
 
 
 def on_files_upload(files):
@@ -242,6 +160,92 @@ def process_merge(file_state, order_json):
     except Exception as e:
         return None, None, f"Error: {e}"
 
+
+# ── Drag-and-drop JS injected into <head> to bypass Gradio HTML sanitization ──
+
+HEAD_JS = """
+<script>
+(function () {
+  var dragging = null;
+
+  function renumber(list) {
+    list.querySelectorAll('.vbadge').forEach(function (b, i) {
+      b.textContent = '#' + (i + 1);
+    });
+  }
+
+  function pushOrder(list) {
+    var paths = Array.from(list.querySelectorAll('.vitem'))
+                     .map(function (li) { return li.dataset.path; });
+    window._vorder = JSON.stringify(paths);
+    /* find the hidden textbox Gradio renders for elem_id="m-order" */
+    var box = document.querySelector('#m-order textarea');
+    if (box) {
+      box.value = window._vorder;
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      box.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }
+
+  function attachDrag(list) {
+    list.querySelectorAll('.vitem').forEach(function (item) {
+      item.addEventListener('dragstart', function (e) {
+        dragging = item;
+        e.dataTransfer.effectAllowed = 'move';
+        setTimeout(function () { item.style.opacity = '0.35'; }, 0);
+      });
+      item.addEventListener('dragend', function () {
+        item.style.opacity = '1';
+        list.querySelectorAll('.vitem').forEach(function (li) {
+          li.style.borderColor = '#374151';
+        });
+        dragging = null;
+        renumber(list);
+        pushOrder(list);
+      });
+      item.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (!dragging || dragging === item) return;
+        var rect = item.getBoundingClientRect();
+        var insertAfter = e.clientY > rect.top + rect.height / 2;
+        list.querySelectorAll('.vitem').forEach(function (li) {
+          li.style.borderColor = '#374151';
+        });
+        item.style.borderColor = '#6366f1';
+        list.insertBefore(dragging, insertAfter ? item.nextSibling : item);
+      });
+      item.addEventListener('drop', function (e) { e.preventDefault(); });
+    });
+  }
+
+  /* MutationObserver watches for vlist being added/replaced in the DOM */
+  var observer = new MutationObserver(function () {
+    var list = document.getElementById('vlist');
+    if (list && !list._dragReady) {
+      list._dragReady = true;
+      attachDrag(list);
+    }
+  });
+
+  function start() {
+    observer.observe(document.body, { childList: true, subtree: true });
+    /* also handle any list already present on load */
+    var list = document.getElementById('vlist');
+    if (list && !list._dragReady) {
+      list._dragReady = true;
+      attachDrag(list);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start);
+  } else {
+    start();
+  }
+})();
+</script>
+"""
 
 # ── UI ────────────────────────────────────────────────────────────────────────
 
@@ -336,4 +340,4 @@ with gr.Blocks(title="Video Editor") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(share=False, theme=gr.themes.Soft())
+    demo.launch(share=False, theme=gr.themes.Soft(), head=HEAD_JS)
